@@ -137,6 +137,14 @@ type InvalidUnmarshalError struct {
 	Type reflect.Type
 }
 
+type Node struct {
+	Start    int
+	End      int
+	KeyStart int // Only value if a member of a struct
+	KeyEnd   int
+	Value    interface{}
+}
+
 func (e *InvalidUnmarshalError) Error() string {
 	if e.Type == nil {
 		return "json: Unmarshal(nil)"
@@ -476,6 +484,11 @@ func (d *decodeState) array(v reflect.Value) {
 		// Otherwise it's invalid.
 		fallthrough
 	default:
+		if v.Type() == reflect.TypeOf(Node{}) {
+			// Decoding to Node? Switch to that code
+			v.Set(reflect.ValueOf(d.arrayNode()))
+			return
+		}
 		d.saveError(&UnmarshalTypeError{"array", v.Type(), int64(d.off)})
 		d.off--
 		d.next()
@@ -576,6 +589,10 @@ func (d *decodeState) object(v reflect.Value) {
 	// Decoding into nil interface?  Switch to non-reflect code.
 	if v.Kind() == reflect.Interface && v.NumMethod() == 0 {
 		v.Set(reflect.ValueOf(d.objectInterface()))
+		return
+	} else if v.Type() == reflect.TypeOf(Node{}) {
+		// Decoding to Node? Switch to that code
+		v.Set(reflect.ValueOf(d.objectNode()))
 		return
 	}
 
@@ -962,6 +979,22 @@ func (d *decodeState) valueInterface() interface{} {
 	}
 }
 
+// valueNode is like valueInterface but returns a wrapped version that
+// contains metadata about where it decoded from
+func (d *decodeState) valueNode() Node {
+	switch d.scanWhile(scanSkipSpace) {
+	default:
+		d.error(errPhase)
+		panic("unreachable")
+	case scanBeginArray:
+		return d.arrayNode()
+	case scanBeginObject:
+		return d.objectNode()
+	case scanBeginLiteral:
+		return d.literalNode()
+	}
+}
+
 // arrayInterface is like array but returns []interface{}.
 func (d *decodeState) arrayInterface() []interface{} {
 	var v = make([]interface{}, 0)
@@ -988,6 +1021,40 @@ func (d *decodeState) arrayInterface() []interface{} {
 		}
 	}
 	return v
+}
+
+// arrayNode is like arrayInterface but returns Node.
+func (d *decodeState) arrayNode() Node {
+	var v = make([]Node, 0)
+	node := Node{
+		Start: d.off,
+		Value: v,
+	}
+	for {
+		// Look ahead for ] - can only happen on first iteration.
+		op := d.scanWhile(scanSkipSpace)
+		if op == scanEndArray {
+			break
+		}
+
+		// Back up so d.value can have the byte we just read.
+		d.off--
+		d.scan.undo(op)
+
+		v = append(v, d.valueNode())
+
+		// Next token must be , or ].
+		op = d.scanWhile(scanSkipSpace)
+		if op == scanEndArray {
+			break
+		}
+		if op != scanArrayValue {
+			d.error(errPhase)
+		}
+	}
+	node.Value = v
+	node.End = d.off
+	return node
 }
 
 // objectInterface is like object but returns map[string]interface{}.
@@ -1036,6 +1103,61 @@ func (d *decodeState) objectInterface() map[string]interface{} {
 	return m
 }
 
+// objectNode is like object but returns Node.
+func (d *decodeState) objectNode() Node {
+	m := make(map[string]Node)
+	node := Node{
+		Start: d.off,
+	}
+	for {
+		// Read opening " of string key or closing }.
+		op := d.scanWhile(scanSkipSpace)
+		if op == scanEndObject {
+			// closing } - can only happen on first iteration.
+			break
+		}
+		if op != scanBeginLiteral {
+			d.error(errPhase)
+		}
+
+		// Read string key.
+		start := d.off - 1
+		op = d.scanWhile(scanContinue)
+		item := d.data[start : d.off-1]
+		keyEnd := d.off - 1
+		key, ok := unquote(item)
+		if !ok {
+			d.error(errPhase)
+		}
+
+		// Read : before value.
+		if op == scanSkipSpace {
+			op = d.scanWhile(scanSkipSpace)
+		}
+		if op != scanObjectKey {
+			d.error(errPhase)
+		}
+
+		// Read value.
+		val := d.valueNode()
+		val.KeyStart = start
+		val.KeyEnd = keyEnd
+		m[key] = val
+
+		// Next token must be , or }.
+		op = d.scanWhile(scanSkipSpace)
+		if op == scanEndObject {
+			break
+		}
+		if op != scanObjectValue {
+			d.error(errPhase)
+		}
+	}
+	node.Value = m
+	node.End = d.off
+	return node
+}
+
 // literalInterface is like literal but returns an interface value.
 func (d *decodeState) literalInterface() interface{} {
 	// All bytes inside literal return scanContinue op code.
@@ -1071,6 +1193,17 @@ func (d *decodeState) literalInterface() interface{} {
 		}
 		return n
 	}
+}
+
+func (d *decodeState) literalNode() Node {
+	start := d.off - 1
+	// Can just use the interface version since this has no children
+	node := Node{
+		Start: start,
+		Value: d.literalInterface(),
+	}
+	node.End = d.off
+	return node
 }
 
 // getu4 decodes \uXXXX from the beginning of s, returning the hex value,
