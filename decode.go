@@ -208,7 +208,7 @@ func (d *decodeState) unmarshal(v interface{}) error {
 	// test must be applied at the top level of the value.
 	err := d.value(rv)
 	if err != nil {
-		return err
+		return d.addErrorContext(err)
 	}
 	return d.savedError
 }
