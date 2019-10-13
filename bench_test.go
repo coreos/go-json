@@ -385,3 +385,22 @@ func BenchmarkTypeFieldsCache(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkEncodeMarshaler(b *testing.B) {
+	b.ReportAllocs()
+
+	m := struct {
+		A int
+		B RawMessage
+	}{}
+
+	b.RunParallel(func(pb *testing.PB) {
+		enc := NewEncoder(ioutil.Discard)
+
+		for pb.Next() {
+			if err := enc.Encode(&m); err != nil {
+				b.Fatal("Encode:", err)
+			}
+		}
+	})
+}
