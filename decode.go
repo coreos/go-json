@@ -152,14 +152,6 @@ type InvalidUnmarshalError struct {
 	Type reflect.Type
 }
 
-type Node struct {
-	Start    int
-	End      int
-	KeyStart int // Only value if a member of a struct
-	KeyEnd   int
-	Value    interface{}
-}
-
 func (e *InvalidUnmarshalError) Error() string {
 	if e.Type == nil {
 		return "json: Unmarshal(nil)"
@@ -169,6 +161,14 @@ func (e *InvalidUnmarshalError) Error() string {
 		return "json: Unmarshal(non-pointer " + e.Type.String() + ")"
 	}
 	return "json: Unmarshal(nil " + e.Type.String() + ")"
+}
+
+type Node struct {
+	Start    int
+	End      int
+	KeyStart int // Only value if a member of a struct
+	KeyEnd   int
+	Value    interface{}
 }
 
 func (d *decodeState) unmarshal(v interface{}) (err error) {
