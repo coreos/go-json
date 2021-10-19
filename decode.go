@@ -152,14 +152,6 @@ type InvalidUnmarshalError struct {
 	Type reflect.Type
 }
 
-type Node struct {
-	Start    int
-	End      int
-	KeyStart int // Only value if a member of a struct
-	KeyEnd   int
-	Value    interface{}
-}
-
 func (e *InvalidUnmarshalError) Error() string {
 	if e.Type == nil {
 		return "json: Unmarshal(nil)"
@@ -169,6 +161,35 @@ func (e *InvalidUnmarshalError) Error() string {
 		return "json: Unmarshal(non-pointer " + e.Type.String() + ")"
 	}
 	return "json: Unmarshal(nil " + e.Type.String() + ")"
+}
+
+type Node struct {
+	Start    int
+	End      int
+	KeyStart int // Only value if a member of a struct
+	KeyEnd   int
+	Value    interface{}
+}
+
+// Recursively disintermediate any Nodes in the argument.
+func unwrapNode(in interface{}) interface{} {
+	if node, ok := in.(Node); ok {
+		return unwrapNode(node.Value)
+	} else if arr, ok := in.([]Node); ok {
+		ret := make([]interface{}, len(arr))
+		for i, ent := range arr {
+			ret[i] = unwrapNode(ent.Value)
+		}
+		return ret
+	} else if obj, ok := in.(map[string]Node); ok {
+		ret := make(map[string]interface{})
+		for k, v := range obj {
+			ret[k] = unwrapNode(v.Value)
+		}
+		return ret
+	} else {
+		return in
+	}
 }
 
 func (d *decodeState) unmarshal(v interface{}) (err error) {
@@ -1027,17 +1048,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 
 // valueInterface is like value but returns interface{}
 func (d *decodeState) valueInterface() interface{} {
-	switch d.scanWhile(scanSkipSpace) {
-	default:
-		d.error(errPhase)
-		panic("unreachable")
-	case scanBeginArray:
-		return d.arrayInterface()
-	case scanBeginObject:
-		return d.objectInterface()
-	case scanBeginLiteral:
-		return d.literalInterface()
-	}
+	return unwrapNode(d.valueNode())
 }
 
 // valueNode is like valueInterface but returns a wrapped version that
@@ -1058,30 +1069,7 @@ func (d *decodeState) valueNode() Node {
 
 // arrayInterface is like array but returns []interface{}.
 func (d *decodeState) arrayInterface() []interface{} {
-	var v = make([]interface{}, 0)
-	for {
-		// Look ahead for ] - can only happen on first iteration.
-		op := d.scanWhile(scanSkipSpace)
-		if op == scanEndArray {
-			break
-		}
-
-		// Back up so d.value can have the byte we just read.
-		d.off--
-		d.scan.undo(op)
-
-		v = append(v, d.valueInterface())
-
-		// Next token must be , or ].
-		op = d.scanWhile(scanSkipSpace)
-		if op == scanEndArray {
-			break
-		}
-		if op != scanArrayValue {
-			d.error(errPhase)
-		}
-	}
-	return v
+	return unwrapNode(d.arrayNode()).([]interface{})
 }
 
 // arrayNode is like arrayInterface but returns Node.
@@ -1120,48 +1108,7 @@ func (d *decodeState) arrayNode() Node {
 
 // objectInterface is like object but returns map[string]interface{}.
 func (d *decodeState) objectInterface() map[string]interface{} {
-	m := make(map[string]interface{})
-	for {
-		// Read opening " of string key or closing }.
-		op := d.scanWhile(scanSkipSpace)
-		if op == scanEndObject {
-			// closing } - can only happen on first iteration.
-			break
-		}
-		if op != scanBeginLiteral {
-			d.error(errPhase)
-		}
-
-		// Read string key.
-		start := d.off - 1
-		op = d.scanWhile(scanContinue)
-		item := d.data[start : d.off-1]
-		key, ok := unquote(item)
-		if !ok {
-			d.error(errPhase)
-		}
-
-		// Read : before value.
-		if op == scanSkipSpace {
-			op = d.scanWhile(scanSkipSpace)
-		}
-		if op != scanObjectKey {
-			d.error(errPhase)
-		}
-
-		// Read value.
-		m[key] = d.valueInterface()
-
-		// Next token must be , or }.
-		op = d.scanWhile(scanSkipSpace)
-		if op == scanEndObject {
-			break
-		}
-		if op != scanObjectValue {
-			d.error(errPhase)
-		}
-	}
-	return m
+	return unwrapNode(d.objectNode()).(map[string]interface{})
 }
 
 // objectNode is like object but returns Node.
