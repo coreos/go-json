@@ -93,7 +93,7 @@ import (
 // Instead, they are replaced by the Unicode replacement
 // character U+FFFD.
 //
-func Unmarshal(data []byte, v interface{}) error {
+func Unmarshal(data []byte, v any) error {
 	// Check for well-formedness.
 	// Avoids filling out half a data structure
 	// before discovering a JSON syntax error.
@@ -172,21 +172,21 @@ type Node struct {
 	End      int
 	KeyStart int // Only value if a member of a struct
 	KeyEnd   int
-	Value    interface{}
+	Value    any
 }
 
 // Recursively disintermediate any Nodes in the argument.
-func unwrapNode(in interface{}) interface{} {
+func unwrapNode(in any) any {
 	if node, ok := in.(Node); ok {
 		return unwrapNode(node.Value)
 	} else if arr, ok := in.([]Node); ok {
-		ret := make([]interface{}, len(arr))
+		ret := make([]any, len(arr))
 		for i, ent := range arr {
 			ret[i] = unwrapNode(ent.Value)
 		}
 		return ret
 	} else if obj, ok := in.(map[string]Node); ok {
-		ret := make(map[string]interface{})
+		ret := make(map[string]any)
 		for k, v := range obj {
 			ret[k] = unwrapNode(v.Value)
 		}
@@ -196,7 +196,7 @@ func unwrapNode(in interface{}) interface{} {
 	}
 }
 
-func (d *decodeState) unmarshal(v interface{}) error {
+func (d *decodeState) unmarshal(v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &InvalidUnmarshalError{reflect.TypeOf(v)}
@@ -427,7 +427,7 @@ type unquotedValue struct{}
 // quoted string literal or literal null into an interface value.
 // If it finds anything other than a quoted string literal or null,
 // valueQuoted returns unquotedValue{}.
-func (d *decodeState) valueQuoted() interface{} {
+func (d *decodeState) valueQuoted() any {
 	switch d.opcode {
 	default:
 		panic(phasePanicMsg)
@@ -494,7 +494,7 @@ func indirect(v reflect.Value, decodingNull bool) (Unmarshaler, encoding.TextUnm
 		}
 
 		// Prevent infinite loop if v is an interface pointing to its own address:
-		//     var v interface{}
+		//     var v any
 		//     v = &v
 		if v.Elem().Kind() == reflect.Interface && v.Elem().Elem() == v {
 			v = v.Elem()
@@ -878,7 +878,7 @@ func (d *decodeState) object(v reflect.Value) error {
 
 // convertNumber converts the number literal s to a float64 or a Number
 // depending on the setting of d.useNumber.
-func (d *decodeState) convertNumber(s string) (interface{}, error) {
+func (d *decodeState) convertNumber(s string) (any, error) {
 	if d.useNumber {
 		return Number(s), nil
 	}
@@ -1075,7 +1075,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 // but they avoid the weight of reflection in this common case.
 
 // valueInterface is like value but returns interface{}
-func (d *decodeState) valueInterface() interface{} {
+func (d *decodeState) valueInterface() any {
 	return unwrapNode(d.valueNode())
 }
 
@@ -1098,8 +1098,8 @@ func (d *decodeState) valueNode() (val Node) {
 }
 
 // arrayInterface is like array but returns []interface{}.
-func (d *decodeState) arrayInterface() []interface{} {
-	return unwrapNode(d.arrayNode()).([]interface{})
+func (d *decodeState) arrayInterface() []any {
+	return unwrapNode(d.arrayNode()).([]any)
 }
 
 // arrayNode is like arrayInterface but returns Node.
@@ -1135,8 +1135,8 @@ func (d *decodeState) arrayNode() Node {
 }
 
 // objectInterface is like object but returns map[string]interface{}.
-func (d *decodeState) objectInterface() map[string]interface{} {
-	return unwrapNode(d.objectNode()).(map[string]interface{})
+func (d *decodeState) objectInterface() map[string]any {
+	return unwrapNode(d.objectNode()).(map[string]any)
 }
 
 // objectNode is like object but returns Node.
@@ -1200,7 +1200,7 @@ func (d *decodeState) objectNode() Node {
 // literalInterface consumes and returns a literal from d.data[d.off-1:] and
 // it reads the following byte ahead. The first byte of the literal has been
 // read already (that's how the caller knows it's a literal).
-func (d *decodeState) literalInterface() interface{} {
+func (d *decodeState) literalInterface() any {
 	// All bytes inside literal return scanContinue op code.
 	start := d.readIndex()
 	d.rescanLiteral()
